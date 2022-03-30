@@ -10,26 +10,26 @@ defmodule EctoCellar do
    - id_type: If the primary key is other than `id`, specify it.
   """
 
-  alias(EctoCellar.Version)
+  alias EctoCellar.Version
+  alias Ecto.Multi
   @native_datetime_prefix "ecto_cellar_native_datetime_"
   @type options :: [id_type: atom(), repo: module()]
 
   @doc """
   Stores the changes at that time in the cellar.
   """
-  @spec store(struct(), options) :: {:ok, struct()} | {:error, struct()}
+  @spec store(struct(), options) :: {:ok, struct()} | {:error, term()}
   def store(%mod{} = model, opts \\ []) do
-    model_id = if id = Map.fetch!(model, id_type(opts)), do: to_string(id)
-
-    case Version.create(
-           %{
-             model_name: mod |> inspect(),
-             model_id: model_id,
-             model_inserted_at: model.inserted_at,
-             version: model |> cast_format_map |> Jason.encode!()
-           },
-           repo(opts)
-         ) do
+    Version.create(
+      %{
+        model_name: mod |> inspect(),
+        model_id: model_id(model, opts),
+        model_inserted_at: model.inserted_at,
+        version: model |> cast_format_map |> Jason.encode!()
+      },
+      repo(opts)
+    )
+    |> case do
       {:ok, _version} -> {:ok, model}
       error -> error
     end
@@ -40,20 +40,47 @@ defmodule EctoCellar do
   """
   @spec store!(struct(), options) :: struct()
   def store!(%mod{} = model, opts \\ []) do
-    model_id = if id = Map.fetch!(model, id_type(opts)), do: to_string(id)
-
-    _version =
-      Version.create!(
-        %{
-          model_name: mod |> inspect(),
-          model_id: model_id,
-          model_inserted_at: model.inserted_at,
-          version: model |> cast_format_map |> Jason.encode!()
-        },
-        repo(opts)
-      )
+    Version.create!(
+      %{
+        model_name: mod |> inspect(),
+        model_id: model_id(model, opts),
+        model_inserted_at: model.inserted_at,
+        version: model |> cast_format_map |> Jason.encode!()
+      },
+      repo(opts)
+    )
 
     model
+  end
+
+  @spec insert_and_store(struct(), options) :: {:ok, struct()} | {:error, term()}
+  def insert_and_store(changeset, opts \\ []) do
+    Multi.new()
+    |> Multi.run(:model, fn _repo, _ -> repo(opts).insert(changeset) end)
+    |> Multi.run(:store, fn _repo, %{model: model} -> store(model, opts) end)
+    |> repo(opts).transaction()
+    |> case do
+      {:ok, %{model: model}} ->
+        {:ok, model}
+
+      error ->
+        error
+    end
+  end
+
+  @spec update_and_store(struct(), options) :: {:ok, struct()} | {:error, term()}
+  def update_and_store(changeset, opts \\ []) do
+    Multi.new()
+    |> Multi.run(:model, fn _repo, _ -> repo(opts).update(changeset) end)
+    |> Multi.run(:store, fn _repo, %{model: record} -> store(record, opts) end)
+    |> repo(opts).transaction()
+    |> case do
+      {:ok, %{model: model}} ->
+        {:ok, model}
+
+      error ->
+        error
+    end
   end
 
   @doc """
@@ -92,6 +119,10 @@ defmodule EctoCellar do
 
   defp repo(opts) when is_list(opts), do: opts[:repo] || EctoCellar.repo()
   defp repo(_), do: EctoCellar.repo()
+
+  defp model_id(model, opts) do
+    if id = Map.fetch!(model, id_type(opts)), do: to_string(id)
+  end
 
   defp to_models(versions, mod) do
     versions

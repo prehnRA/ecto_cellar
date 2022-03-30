@@ -55,6 +55,43 @@ defmodule EctoCellarTest do
     end
   end
 
+  describe "insert_and_store/2" do
+    setup do
+      [
+        post: %Post{title: "title", views: 0},
+        article: %Article{uuid: Ecto.UUID.generate(), title: "title", views: 0}
+      ]
+    end
+
+    test "return {:ok, model}", %{post: post, article: article} do
+      assert {:ok, %Post{title: "title", views: 0}} = EctoCellar.insert_and_store(post)
+
+      assert {:ok, %Article{title: "title", views: 0}} =
+               EctoCellar.insert_and_store(article, id_type: :uuid)
+    end
+  end
+
+  describe "update_and_store/2" do
+    setup do
+      {:ok, post} = %Post{title: "title", views: 0} |> @repo.insert()
+
+      {:ok, article} =
+        %Article{uuid: Ecto.UUID.generate(), title: "title", views: 0} |> @repo.insert()
+
+      [
+        post: post |> Map.put(:views, 1) |> Post.changeset(%{}),
+        article: article |> Map.put(:views, 1) |> Article.changeset(%{})
+      ]
+    end
+
+    test "return {:ok, model}", %{post: post, article: article} do
+      assert {:ok, %Post{title: "title", views: 1}} = EctoCellar.update_and_store(post)
+
+      assert {:ok, %Article{title: "title", views: 1}} =
+               EctoCellar.update_and_store(article, id_type: :uuid)
+    end
+  end
+
   describe "all/2" do
     setup ctx do
       0..10
